@@ -1,0 +1,27 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Raw dataset downloads (sampled CSVs are committed for reproducibility)
+data/*.gz
+data/raw/
+
+# Generated report artifacts (regenerable) + dry-run mock results
+results/matrix.csv
+results/matrix.md
+results/ingest.csv
+results/mixed.csv
+results/mock.json
+results/mock.ingest.json
+
+# Scratch
+*.tmp
+.DS_Store

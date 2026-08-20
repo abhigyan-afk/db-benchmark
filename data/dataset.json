@@ -1,0 +1,10 @@
+{
+  "source": "SNAP soc-Pokec (https://snap.stanford.edu/data/soc-Pokec.html)",
+  "full_nodes": 1632803,
+  "full_edges": 30622564,
+  "sampled_edges": 100000,
+  "sampled_nodes": 49683,
+  "nodes_missing_profiles": 0,
+  "relationships_file": "https://snap.stanford.edu/data/soc-pokec-relationships.txt.gz",
+  "profiles_file": "https://snap.stanford.edu/data/soc-pokec-profiles.txt.gz"
+}

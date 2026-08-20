@@ -14,6 +14,7 @@ from pathlib import Path
 from arango import ArangoClient
 
 from .base import (
+    REQUIRED_INDEXES,
     DatabaseAdapter,
     FootprintResult,
     IngestResult,
@@ -73,23 +74,43 @@ class ArangoDBAdapter(DatabaseAdapter):
             if db.has_collection(col):
                 db.delete_collection(col)
 
-    def create_schema(self) -> None:
+    def _ensure_collections(self) -> None:
         db = self._db()
         if not db.has_collection(NODES_COL):
             db.create_collection(NODES_COL)
         if not db.has_collection(EDGES_COL):
             db.create_collection(EDGES_COL, edge=True)
-        users = db.collection(NODES_COL)
+
+    def _create_indexes(self) -> None:
+        users = self._db().collection(NODES_COL)
         for fields, unique in ((["id"], True), (["age"], False), (["gender"], False)):
             try:
                 users.add_persistent_index(fields=fields, unique=unique)
             except Exception as exc:
-                print(f"  note: index skipped ({exc}): {fields}", file=sys.stderr)
+                print(f"  note: index statement skipped ({exc}): {fields}", file=sys.stderr)
+
+    def create_schema(self) -> None:
+        self._ensure_collections()
+        self._create_indexes()
+
+    def verify_indexes(self) -> None:
+        db = self._db()
+        if not db.has_collection(NODES_COL):
+            raise RuntimeError(f"{self.name}: collection {NODES_COL} missing")
+        users = db.collection(NODES_COL)
+        indexed = {
+            tuple(i.get("fields") or [])
+            for i in users.indexes()
+            if i.get("type") in ("persistent", "hash")
+        }
+        for prop in REQUIRED_INDEXES:
+            if (prop,) not in indexed:
+                raise RuntimeError(f"{self.name}: missing required index on users({prop})")
 
     # -- ingest ------------------------------------------------------------
     def load(self, nodes_path: str | Path, edges_path: str | Path) -> IngestResult:
         self.reset()
-        self.create_schema()
+        self._ensure_collections()
         nodes = list(iter_nodes(nodes_path))
         edges = list(iter_edges(edges_path))
         users = self._db().collection(NODES_COL)
@@ -99,6 +120,12 @@ class ArangoDBAdapter(DatabaseAdapter):
         for i in range(0, len(nodes), BATCH):
             users.insert_many([_node_doc(n) for n in nodes[i : i + BATCH]], overwrite_mode="ignore")
         node_wall = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        self._create_indexes()
+        index_wall = time.perf_counter() - t0
+
+        self.verify_indexes()  # fail rather than silently run a full scan
 
         t0 = time.perf_counter()
         for i in range(0, len(edges), BATCH):
@@ -112,9 +139,9 @@ class ArangoDBAdapter(DatabaseAdapter):
             label="ingest",
             nodes=len(nodes),
             relationships=len(edges),
-            wall_seconds=node_wall + edge_wall,
-            nodes_per_second=len(nodes) / node_wall if node_wall else 0.0,
-            rels_per_second=len(edges) / edge_wall if edge_wall else 0.0,
+            node_load_seconds=node_wall,
+            index_creation_seconds=index_wall,
+            relationship_load_seconds=edge_wall,
             notes=f"insert_many batches, batch={BATCH}",
         )
 
@@ -130,18 +157,27 @@ class ArangoDBAdapter(DatabaseAdapter):
         ))
 
     def q_traversal(self, depth: int, node_id: int) -> object:
+        # "N-hop traversal" = distinct vertices within N hops (start excluded),
+        # the AQL equivalent of Cypher `[:KNOWS*1..N]` + `WHERE b.id <> $id`.
         # `WITH users` is required when the start vertex is a bind variable.
-        # Double COLLECT yields a server-side count of distinct vertices at
-        # exactly `depth` hops (semantic equivalent of Cypher count(DISTINCT b)).
         return list(self._db().aql.execute(
-            f"WITH {NODES_COL} FOR v IN {depth}..{depth} OUTBOUND @start {EDGES_COL} "
+            f"WITH {NODES_COL} FOR v IN 1..{depth} OUTBOUND @start {EDGES_COL} "
+            "FILTER v._key != @start_key "
             "COLLECT k = v._key COLLECT WITH COUNT INTO c RETURN c",
-            bind_vars={"start": f"{NODES_COL}/{node_id}"},
+            bind_vars={"start": f"{NODES_COL}/{node_id}", "start_key": str(node_id)},
         ))
 
     def q_aggregate(self) -> object:
         return list(self._db().aql.execute(
             f"FOR u IN {NODES_COL} COLLECT g = u.gender WITH COUNT INTO c RETURN {{gender: g, count: c}}"
+        ))
+
+    def q_aggregate_rels(self) -> object:
+        # A single edge collection means a single relationship type; the
+        # group-by still yields the relationship count for the "knows" type
+        # (semantic equivalent of Cypher type(r) with one type in the dataset).
+        return list(self._db().aql.execute(
+            f"FOR e IN {EDGES_COL} COLLECT WITH COUNT INTO c RETURN {{type: 'knows', count: c}}"
         ))
 
     def q_read(self, node_id: int) -> object:
@@ -152,6 +188,36 @@ class ArangoDBAdapter(DatabaseAdapter):
             f"UPDATE @key WITH {{bench_ts: @ts}} IN {NODES_COL}",
             bind_vars={"key": str(node_id), "ts": int(time.time() * 1000)},
         ))
+
+    # -- correctness probes (deterministic counts) -------------------------
+    def probe_point(self, node_id: int) -> int:
+        r = list(self._db().aql.execute(
+            f"FOR u IN {NODES_COL} FILTER u.id == @id COLLECT WITH COUNT INTO c RETURN c",
+            bind_vars={"id": node_id},
+        ))
+        return int(r[0])
+
+    def probe_filter(self, age: int) -> int:
+        r = list(self._db().aql.execute(
+            f"FOR u IN {NODES_COL} FILTER u.age > @age COLLECT WITH COUNT INTO c RETURN c",
+            bind_vars={"age": age},
+        ))
+        return int(r[0])
+
+    def probe_traversal(self, depth: int, node_id: int) -> int:
+        r = list(self._db().aql.execute(
+            f"WITH {NODES_COL} FOR v IN 1..{depth} OUTBOUND @start {EDGES_COL} "
+            "FILTER v._key != @start_key "
+            "COLLECT k = v._key COLLECT WITH COUNT INTO c RETURN c",
+            bind_vars={"start": f"{NODES_COL}/{node_id}", "start_key": str(node_id)},
+        ))
+        return int(r[0])
+
+    def probe_aggregate(self) -> dict:
+        rows = list(self._db().aql.execute(
+            f"FOR u IN {NODES_COL} COLLECT g = u.gender WITH COUNT INTO c RETURN {{gender: g, count: c}}"
+        ))
+        return {str(r["gender"]): int(r["count"]) for r in rows}
 
     # -- validation / footprint -------------------------------------------
     def counts(self) -> tuple[int, int]:

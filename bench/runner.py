@@ -16,7 +16,7 @@ from .adapters.base import DatabaseAdapter, LatencyResult, MixedResult
 from .dataset import pick_start_nodes, pick_traversal_start_nodes
 
 # Methodology defaults (documented in the README).
-WARMUP = 5
+WARMUP = 20
 ITERATIONS = 100          # >= 100 per the assignment
 MIXED_CLIENTS = 10
 MIXED_DURATION_S = 30.0
@@ -25,6 +25,7 @@ WRITE_RATIO = 1.0 - READ_RATIO
 AGE_THRESHOLD = 25
 START_NODES = 20
 WRITE_NODES = 50
+PROBE_NODES = 10
 SEED = 42
 
 
@@ -35,12 +36,20 @@ def run_latency(
     iterations: int = ITERATIONS,
     label: str = "",
 ) -> LatencyResult:
-    """Time `call` for `iterations` runs after `warmup` discarded runs."""
+    """Time `call` for `iterations` runs after `warmup` discarded runs.
+
+    Warm-up failures are counted, and if *every* warm-up iteration fails the
+    workload is aborted rather than measured against a broken query.
+    """
+    warmup_failures = 0
     for _ in range(warmup):
         try:
             call()
         except Exception:
-            pass  # warm-up failures are discarded and don't count
+            warmup_failures += 1
+    if warmup_failures == warmup:
+        raise RuntimeError(f"{label}: all {warmup} warm-up iterations failed")
+
     values: list[float] = []
     failures = 0
     for _ in range(iterations):
@@ -50,7 +59,9 @@ def run_latency(
             values.append((time.perf_counter() - t0) * 1000.0)
         except Exception:
             failures += 1
-    return LatencyResult(label=label, values=values, failures=failures)
+    return LatencyResult(
+        label=label, values=values, failures=failures, warmup_failures=warmup_failures
+    )
 
 
 def _rotating(fn: Callable[[int], object], ids: Sequence[int]) -> Callable[[], object]:
@@ -76,9 +87,10 @@ def run_mixed(
     read_ratio: float = READ_RATIO,
     seed: int = SEED,
 ) -> MixedResult:
-    """Concurrent read/write throughput with `clients` threads for `duration_s`."""
+    """Concurrent read/write throughput, tracking actual read vs write counts."""
     stop_at = time.time() + duration_s
-    counters = [0] * clients
+    reads = [0] * clients
+    writes = [0] * clients
     failures = [0] * clients
     barrier = threading.Barrier(clients)
 
@@ -88,15 +100,18 @@ def run_mixed(
         while time.time() < stop_at:
             if rng.random() < read_ratio:
                 node = rng.choice(read_ids)
-                fn = adapter.q_read
+                try:
+                    adapter.q_read(node)
+                    reads[idx] += 1
+                except Exception:
+                    failures[idx] += 1
             else:
                 node = rng.choice(write_ids)
-                fn = adapter.q_write
-            try:
-                fn(node)
-                counters[idx] += 1
-            except Exception:
-                failures[idx] += 1
+                try:
+                    adapter.q_write(node)
+                    writes[idx] += 1
+                except Exception:
+                    failures[idx] += 1
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(clients)]
     t0 = time.perf_counter()
@@ -106,15 +121,17 @@ def run_mixed(
         t.join()
     actual = time.perf_counter() - t0
 
-    total = sum(counters)
+    total_reads = sum(reads)
+    total_writes = sum(writes)
     return MixedResult(
         label="mixed",
         clients=clients,
         read_ratio=read_ratio,
         write_ratio=1.0 - read_ratio,
         duration_seconds=actual,
-        total_ops=total,
-        ops_per_second=total / actual if actual > 0 else 0.0,
+        total_ops=total_reads + total_writes,
+        read_ops=total_reads,
+        write_ops=total_writes,
         failures=sum(failures),
     )
 
@@ -168,9 +185,14 @@ def benchmark(
             ).summary()
             for depth in (1, 2, 3)
         },
-        "aggregation": run_latency(
-            adapter.q_aggregate, warmup=warmup, iterations=iterations, label="aggregation_gender"
-        ).summary(),
+        "aggregations": {
+            "gender": run_latency(
+                adapter.q_aggregate, warmup=warmup, iterations=iterations, label="aggregation_gender"
+            ).summary(),
+            "relationship_type": run_latency(
+                adapter.q_aggregate_rels, warmup=warmup, iterations=iterations, label="aggregation_rel_type"
+            ).summary(),
+        },
         "mixed": run_mixed(
             adapter, ids, write_ids,
             clients=mixed_clients, duration_s=mixed_duration_s,
@@ -178,3 +200,29 @@ def benchmark(
         ).summary(),
     }
     return results
+
+
+def run_correctness_probes(
+    adapter: DatabaseAdapter,
+    probe_ids: Sequence[int],
+    *,
+    age_threshold: int = AGE_THRESHOLD,
+) -> dict:
+    """Deterministic, count-based probes used to cross-check platforms.
+
+    Every probe returns a stable number (not an ordered list), so the same
+    dataset must yield identical values on every platform.
+    """
+    return {
+        "point_lookup": {str(n): adapter.probe_point(n) for n in probe_ids},
+        "filtered_count_age": adapter.probe_filter(age_threshold),
+        "traversals": {
+            str(n): {str(d): adapter.probe_traversal(d, n) for d in (1, 2, 3)}
+            for n in probe_ids
+        },
+        "aggregate_gender": adapter.probe_aggregate(),
+    }
+
+
+def pick_probe_nodes(ids: list[int], edges: list[tuple[int, int]], n: int = PROBE_NODES, seed: int = SEED + 10) -> list[int]:
+    return pick_traversal_start_nodes(ids, edges, n, seed)

@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+# Properties that must be indexed on every platform for the workloads to be
+# a fair "indexed" comparison rather than a full-scan comparison.
+REQUIRED_INDEXES = ("id", "age", "gender")
+
 
 def percentile(sorted_vals: list[float], p: float) -> float:
     """Linear-interpolated percentile (numpy 'linear' / type-7 semantics)."""
@@ -35,6 +39,7 @@ class LatencyResult:
     unit: str = "ms"
     values: list[float] = field(default_factory=list)
     failures: int = 0
+    warmup_failures: int = 0
     notes: str = ""
 
     def _sorted(self) -> list[float]:
@@ -51,6 +56,10 @@ class LatencyResult:
     @property
     def p95(self) -> float:
         return percentile(self._sorted(), 0.95)
+
+    @property
+    def p99(self) -> float:
+        return percentile(self._sorted(), 0.99)
 
     @property
     def mean(self) -> float:
@@ -74,12 +83,15 @@ class LatencyResult:
             "unit": self.unit,
             "iterations": self.count,
             "failures": self.failures,
+            "warmup_failures": self.warmup_failures,
             "p50": round(self.p50, 3),
             "p95": round(self.p95, 3),
+            "p99": round(self.p99, 3),
             "mean": round(self.mean, 3),
             "std": round(self.std, 3),
             "min": round(self.vmin, 3),
             "max": round(self.vmax, 3),
+            "samples_ms": [round(v, 3) for v in self.values],
             "notes": self.notes,
         }
 
@@ -89,17 +101,36 @@ class IngestResult:
     label: str
     nodes: int = 0
     relationships: int = 0
-    wall_seconds: float = 0.0
-    nodes_per_second: float = 0.0
-    rels_per_second: float = 0.0
+    node_load_seconds: float = 0.0
+    index_creation_seconds: float = 0.0
+    relationship_load_seconds: float = 0.0
     notes: str = ""
+
+    @property
+    def total_seconds(self) -> float:
+        return (
+            self.node_load_seconds
+            + self.index_creation_seconds
+            + self.relationship_load_seconds
+        )
+
+    @property
+    def nodes_per_second(self) -> float:
+        return self.nodes / self.node_load_seconds if self.node_load_seconds else 0.0
+
+    @property
+    def rels_per_second(self) -> float:
+        return self.relationships / self.relationship_load_seconds if self.relationship_load_seconds else 0.0
 
     def summary(self) -> dict:
         return {
             "label": self.label,
             "nodes": self.nodes,
             "relationships": self.relationships,
-            "wall_seconds": round(self.wall_seconds, 3),
+            "node_load_seconds": round(self.node_load_seconds, 3),
+            "index_creation_seconds": round(self.index_creation_seconds, 3),
+            "relationship_load_seconds": round(self.relationship_load_seconds, 3),
+            "total_load_seconds": round(self.total_seconds, 3),
             "nodes_per_second": round(self.nodes_per_second, 1),
             "rels_per_second": round(self.rels_per_second, 1),
             "notes": self.notes,
@@ -110,22 +141,39 @@ class IngestResult:
 class MixedResult:
     label: str
     clients: int = 0
-    read_ratio: float = 0.0
-    write_ratio: float = 0.0
+    read_ratio: float = 0.0      # configured
+    write_ratio: float = 0.0     # configured
     duration_seconds: float = 0.0
     total_ops: int = 0
-    ops_per_second: float = 0.0
+    read_ops: int = 0            # actual
+    write_ops: int = 0           # actual
     failures: int = 0
+
+    @property
+    def ops_per_second(self) -> float:
+        return self.total_ops / self.duration_seconds if self.duration_seconds else 0.0
+
+    @property
+    def actual_read_ratio(self) -> float:
+        return self.read_ops / self.total_ops if self.total_ops else 0.0
+
+    @property
+    def actual_write_ratio(self) -> float:
+        return self.write_ops / self.total_ops if self.total_ops else 0.0
 
     def summary(self) -> dict:
         return {
             "label": self.label,
             "clients": self.clients,
-            "read_ratio": round(self.read_ratio, 2),
-            "write_ratio": round(self.write_ratio, 2),
-            "duration_seconds": round(self.duration_seconds, 3),
+            "configured_read_ratio": round(self.read_ratio, 2),
+            "configured_write_ratio": round(self.write_ratio, 2),
+            "actual_read_ops": self.read_ops,
+            "actual_write_ops": self.write_ops,
+            "actual_read_ratio": round(self.actual_read_ratio, 4),
+            "actual_write_ratio": round(self.actual_write_ratio, 4),
             "total_ops": self.total_ops,
             "ops_per_second": round(self.ops_per_second, 1),
+            "duration_seconds": round(self.duration_seconds, 3),
             "failures": self.failures,
         }
 
@@ -170,12 +218,20 @@ class DatabaseAdapter(ABC):
 
     @abstractmethod
     def create_schema(self) -> None:
-        """Create the same indexes everywhere (idempotent): index(id), index(age), index(gender)."""
+        """Create the indexes used by the workloads (id, age, gender)."""
+
+    @abstractmethod
+    def verify_indexes(self) -> None:
+        """Raise if any required index (id/age/gender) is missing.
+
+        The benchmark must never silently fall back to a full scan for a
+        workload that is supposed to be index-assisted.
+        """
 
     # -- ingest ------------------------------------------------------------
     @abstractmethod
     def load(self, nodes_path: str | Path, edges_path: str | Path) -> IngestResult:
-        """Reset, create schema, and ingest; return throughput timings."""
+        """Reset, create schema, and ingest; return per-phase timings."""
 
     # -- queries (one logical operation each) ------------------------------
     @abstractmethod
@@ -195,12 +251,33 @@ class DatabaseAdapter(ABC):
         """Group-by aggregation (count nodes per gender)."""
 
     @abstractmethod
+    def q_aggregate_rels(self) -> object:
+        """Group-by aggregation over relationship types (count per type)."""
+
+    @abstractmethod
     def q_read(self, node_id: int) -> object:
         """Lightweight read used by the mixed workload."""
 
     @abstractmethod
     def q_write(self, node_id: int) -> object:
         """Bounded write (update a property) used by the mixed workload."""
+
+    # -- correctness probes (deterministic, comparable across platforms) ---
+    @abstractmethod
+    def probe_point(self, node_id: int) -> int:
+        """Return count of nodes with the given id (0 or 1)."""
+
+    @abstractmethod
+    def probe_filter(self, age: int) -> int:
+        """Return total count of nodes with age > threshold (no LIMIT)."""
+
+    @abstractmethod
+    def probe_traversal(self, depth: int, node_id: int) -> int:
+        """Return distinct-node count at exactly `depth` hops."""
+
+    @abstractmethod
+    def probe_aggregate(self) -> dict:
+        """Return {gender: count} totals."""
 
     # -- validation / footprint -------------------------------------------
     @abstractmethod

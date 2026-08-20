@@ -6,5 +6,9 @@
   "sampled_nodes": 49683,
   "nodes_missing_profiles": 0,
   "relationships_file": "https://snap.stanford.edu/data/soc-pokec-relationships.txt.gz",
-  "profiles_file": "https://snap.stanford.edu/data/soc-pokec-profiles.txt.gz"
+  "profiles_file": "https://snap.stanford.edu/data/soc-pokec-profiles.txt.gz",
+  "selection_method": "first N directed edges in file order, all incident nodes, profile properties joined",
+  "seed": null,
+  "nodes_csv_sha256": "50e8728208ccc643a93923bc2ff9125cbd7fcb87b935b4160005fa95a6d35ab2",
+  "edges_csv_sha256": "2f4ea55396f81e8299b3b1da2a3dcae1e76fcc9fcbf962ab6ce5463a808f3d51"
 }

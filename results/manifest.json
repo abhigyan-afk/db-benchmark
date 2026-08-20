@@ -1,0 +1,37 @@
+{
+  "git_commit": "63220e2156a7416a3b3bffed7407529911ab8c0a",
+  "dataset": {
+    "nodes_csv_sha256": "50e8728208ccc643a93923bc2ff9125cbd7fcb87b935b4160005fa95a6d35ab2",
+    "edges_csv_sha256": "2f4ea55396f81e8299b3b1da2a3dcae1e76fcc9fcbf962ab6ce5463a808f3d51",
+    "nodes": 49683,
+    "relationships": 100000
+  },
+  "methodology": {
+    "warmup_iterations": 20,
+    "measurement_iterations": 100,
+    "mixed_clients": 10,
+    "mixed_duration_seconds": 30.0,
+    "read_ratio": 0.9,
+    "write_ratio": 0.09999999999999998
+  },
+  "environment": {
+    "os": "Linux-6.8.0-1052-azure-x86_64-with-glibc2.39",
+    "python": "3.12.1",
+    "cpu_count": "2",
+    "machine": "x86_64",
+    "processor": "x86_64",
+    "ram": "7.8 GB"
+  },
+  "drivers": {
+    "neo4j": "6.2.0",
+    "falkordb": "unknown",
+    "python-arango": "unknown"
+  },
+  "databases": {
+    "arangodb": "ArangoDB Cloud",
+    "cognodb": "CognoDB Cloud",
+    "falkordb": "FalkorDB Cloud",
+    "memgraph": "Memgraph Cloud",
+    "neo4j": "Neo4j AuraDB"
+  }
+}

@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import hashlib
 import json
 import sys
 import urllib.request
@@ -137,15 +138,26 @@ def main() -> None:
         writer.writerow(["src", "dst"])
         writer.writerows(edges)
 
+    def _sha256(path: Path) -> str:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
     meta = {
         "source": "SNAP soc-Pokec (https://snap.stanford.edu/data/soc-Pokec.html)",
         "full_nodes": 1_632_803,
         "full_edges": 30_622_564,
+        "selection_method": "first N directed edges in file order, all incident nodes, profile properties joined",
+        "seed": None,
         "sampled_edges": len(edges),
         "sampled_nodes": len(node_ids),
         "nodes_missing_profiles": missing_profiles,
         "relationships_file": REL_URL,
         "profiles_file": PROF_URL,
+        "nodes_csv_sha256": _sha256(nodes_path),
+        "edges_csv_sha256": _sha256(edges_path),
     }
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
 

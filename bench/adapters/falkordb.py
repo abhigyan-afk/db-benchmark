@@ -9,6 +9,7 @@ from pathlib import Path
 from falkordb import FalkorDB
 
 from .base import (
+    REQUIRED_INDEXES,
     DatabaseAdapter,
     FootprintResult,
     IngestResult,
@@ -79,11 +80,28 @@ class FalkorDBAdapter(DatabaseAdapter):
 
     def create_schema(self) -> None:
         g = self._graph()
-        for prop in ("id", "age", "gender"):
+        for prop in REQUIRED_INDEXES:
             try:
                 g.create_node_range_index("User", prop)
             except Exception as exc:
-                print(f"  note: index skipped ({exc}): User({prop})", file=sys.stderr)
+                print(f"  note: index statement skipped ({exc}): User({prop})", file=sys.stderr)
+
+    def verify_indexes(self) -> None:
+        g = self._graph()
+        try:
+            rows = g.query("CALL db.indexes()").result_set
+        except Exception as exc:
+            raise RuntimeError(f"{self.name}: could not list indexes ({exc})") from exc
+        indexed: set[tuple[str, str]] = set()
+        for row in rows:
+            label = row[0] if len(row) > 0 else None
+            props = row[1] if len(row) > 1 else []
+            if isinstance(label, str) and isinstance(props, list):
+                for prop in props:
+                    indexed.add((label, prop))
+        for prop in REQUIRED_INDEXES:
+            if ("User", prop) not in indexed:
+                raise RuntimeError(f"{self.name}: missing required index on User({prop})")
 
     # -- ingest ------------------------------------------------------------
     def load(self, nodes_path: str | Path, edges_path: str | Path) -> IngestResult:
@@ -102,7 +120,11 @@ class FalkorDBAdapter(DatabaseAdapter):
             )
         node_wall = time.perf_counter() - t0
 
+        t0 = time.perf_counter()
         self.create_schema()
+        index_wall = time.perf_counter() - t0
+
+        self.verify_indexes()  # fail rather than silently run a full scan
 
         t0 = time.perf_counter()
         for i in range(0, len(edges), BATCH):
@@ -119,9 +141,9 @@ class FalkorDBAdapter(DatabaseAdapter):
             label="ingest",
             nodes=len(nodes),
             relationships=len(edges),
-            wall_seconds=node_wall + edge_wall,
-            nodes_per_second=len(nodes) / node_wall if node_wall else 0.0,
-            rels_per_second=len(edges) / edge_wall if edge_wall else 0.0,
+            node_load_seconds=node_wall,
+            index_creation_seconds=index_wall,
+            relationship_load_seconds=edge_wall,
             notes=f"batched UNWIND, batch={BATCH}",
         )
 
@@ -137,14 +159,23 @@ class FalkorDBAdapter(DatabaseAdapter):
         ).result_set
 
     def q_traversal(self, depth: int, node_id: int) -> object:
+        # "N-hop traversal" = distinct nodes within N hops, start excluded.
+        # FalkorDB cannot filter the end node `b` directly in WHERE, so we
+        # `WITH DISTINCT b` first (matches the other engines' `count(DISTINCT b)`).
         return self._graph().ro_query(
-            f"MATCH (a:User {{id: $id}})-[:KNOWS*{depth}..{depth}]->(b) RETURN count(DISTINCT b) AS c",
+            f"MATCH (a:User {{id: $id}})-[:KNOWS*1..{depth}]->(b) "
+            "WITH DISTINCT b AS b WHERE b.id <> $id RETURN count(b) AS c",
             params={"id": node_id},
         ).result_set
 
     def q_aggregate(self) -> object:
         return self._graph().ro_query(
             "MATCH (n:User) RETURN n.gender AS g, count(*) AS c ORDER BY g"
+        ).result_set
+
+    def q_aggregate_rels(self) -> object:
+        return self._graph().ro_query(
+            "MATCH ()-[r:KNOWS]->() RETURN type(r) AS t, count(*) AS c ORDER BY t"
         ).result_set
 
     def q_read(self, node_id: int) -> object:
@@ -156,6 +187,33 @@ class FalkorDBAdapter(DatabaseAdapter):
             "MATCH (n:User {id: $id}) SET n.bench_ts = $ts RETURN n.id AS id",
             params={"id": node_id, "ts": ts},
         ).result_set
+
+    # -- correctness probes (deterministic counts) -------------------------
+    def probe_point(self, node_id: int) -> int:
+        rs = self._graph().ro_query(
+            "MATCH (n:User {id: $id}) RETURN count(n) AS c", params={"id": node_id}
+        ).result_set
+        return int(rs[0][0])
+
+    def probe_filter(self, age: int) -> int:
+        rs = self._graph().ro_query(
+            "MATCH (n:User) WHERE n.age > $age RETURN count(n) AS c", params={"age": age}
+        ).result_set
+        return int(rs[0][0])
+
+    def probe_traversal(self, depth: int, node_id: int) -> int:
+        rs = self._graph().ro_query(
+            f"MATCH (a:User {{id: $id}})-[:KNOWS*1..{depth}]->(b) "
+            "WITH DISTINCT b AS b WHERE b.id <> $id RETURN count(b) AS c",
+            params={"id": node_id},
+        ).result_set
+        return int(rs[0][0])
+
+    def probe_aggregate(self) -> dict:
+        rows = self._graph().ro_query(
+            "MATCH (n:User) RETURN n.gender AS g, count(*) AS c ORDER BY g"
+        ).result_set
+        return {str(r[0]): int(r[1]) for r in rows}
 
     # -- validation / footprint -------------------------------------------
     def counts(self) -> tuple[int, int]:

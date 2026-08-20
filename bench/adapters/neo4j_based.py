@@ -1,8 +1,8 @@
 """Adapters for Bolt/Cypher databases (Neo4j official driver).
 
 CognoDB Cloud, Neo4j AuraDB and Memgraph Cloud all speak Bolt + Cypher, so
-they share one implementation. The only dialect difference is index DDL,
-which each subclass supplies.
+they share one implementation. The only dialect differences are index DDL
+and index introspection, which each subclass supplies.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pathlib import Path
 from neo4j import GraphDatabase
 
 from .base import (
+    REQUIRED_INDEXES,
     DatabaseAdapter,
     FootprintResult,
     IngestResult,
@@ -89,6 +90,25 @@ class Neo4jDriverAdapter(DatabaseAdapter):
             "CREATE INDEX user_gender IF NOT EXISTS FOR (n:User) ON (n.gender)",
         ]
 
+    def _list_indexes(self) -> set[tuple[str, str]]:
+        """Return {(label, property), ...} for all existing indexes."""
+        s = self._session()
+        rows = s.run("SHOW INDEXES YIELD name, labelsOrTypes, properties").data()
+        out: set[tuple[str, str]] = set()
+        for r in rows:
+            labels = r.get("labelsOrTypes") or []
+            props = r.get("properties") or []
+            for label in labels:
+                for prop in props:
+                    out.add((label, prop))
+        return out
+
+    def verify_indexes(self) -> None:
+        indexed = self._list_indexes()
+        for prop in REQUIRED_INDEXES:
+            if ("User", prop) not in indexed:
+                raise RuntimeError(f"{self.name}: missing required index on User({prop})")
+
     def reset(self) -> None:
         self._session().run("MATCH (n) DETACH DELETE n").consume()
 
@@ -110,7 +130,11 @@ class Neo4jDriverAdapter(DatabaseAdapter):
         self._load_nodes(nodes)
         node_wall = time.perf_counter() - t0
 
-        self.create_schema()  # indexes after nodes, so edge MATCHes use them
+        t0 = time.perf_counter()
+        self.create_schema()
+        index_wall = time.perf_counter() - t0
+
+        self.verify_indexes()  # fail rather than silently run a full scan
 
         t0 = time.perf_counter()
         self._load_edges(edges)
@@ -120,9 +144,9 @@ class Neo4jDriverAdapter(DatabaseAdapter):
             label="ingest",
             nodes=len(nodes),
             relationships=len(edges),
-            wall_seconds=node_wall + edge_wall,
-            nodes_per_second=len(nodes) / node_wall if node_wall else 0.0,
-            rels_per_second=len(edges) / edge_wall if edge_wall else 0.0,
+            node_load_seconds=node_wall,
+            index_creation_seconds=index_wall,
+            relationship_load_seconds=edge_wall,
             notes=f"batched UNWIND, batch={BATCH}",
         )
 
@@ -157,13 +181,21 @@ class Neo4jDriverAdapter(DatabaseAdapter):
         ).data()
 
     def q_traversal(self, depth: int, node_id: int) -> object:
+        # "N-hop traversal" = distinct nodes reachable within N hops
+        # (shortest-path distance <= N), start node excluded. `*1..N` (rather
+        # than `*N..N`) is unambiguous: `*N..N` counts nodes at shorter
+        # distances too, which engines disagree on for cyclic paths.
         return self._session().run(
-            f"MATCH (a:User {{id: $id}})-[:KNOWS*{depth}..{depth}]->(b) RETURN count(DISTINCT b) AS c",
+            f"MATCH (a:User {{id: $id}})-[:KNOWS*1..{depth}]->(b) "
+            "WHERE b.id <> $id RETURN count(DISTINCT b) AS c",
             id=node_id,
         ).data()
 
     def q_aggregate(self) -> object:
         return self._session().run("MATCH (n:User) RETURN n.gender AS g, count(*) AS c ORDER BY g").data()
+
+    def q_aggregate_rels(self) -> object:
+        return self._session().run("MATCH ()-[r:KNOWS]->() RETURN type(r) AS t, count(*) AS c ORDER BY t").data()
 
     def q_read(self, node_id: int) -> object:
         return self.q_point(node_id)
@@ -173,6 +205,27 @@ class Neo4jDriverAdapter(DatabaseAdapter):
         return self._session().run(
             "MATCH (n:User {id: $id}) SET n.bench_ts = $ts RETURN n.id AS id", id=node_id, ts=ts
         ).data()
+
+    # -- correctness probes (deterministic counts) -------------------------
+    def probe_point(self, node_id: int) -> int:
+        r = self._session().run("MATCH (n:User {id: $id}) RETURN count(n) AS c", id=node_id).single()
+        return int(r["c"]) if r else 0
+
+    def probe_filter(self, age: int) -> int:
+        r = self._session().run("MATCH (n:User) WHERE n.age > $age RETURN count(n) AS c", age=age).single()
+        return int(r["c"]) if r else 0
+
+    def probe_traversal(self, depth: int, node_id: int) -> int:
+        r = self._session().run(
+            f"MATCH (a:User {{id: $id}})-[:KNOWS*1..{depth}]->(b) "
+            "WHERE b.id <> $id RETURN count(DISTINCT b) AS c",
+            id=node_id,
+        ).single()
+        return int(r["c"]) if r else 0
+
+    def probe_aggregate(self) -> dict:
+        rows = self._session().run("MATCH (n:User) RETURN n.gender AS g, count(*) AS c ORDER BY g").data()
+        return {str(r["g"]): int(r["c"]) for r in rows}
 
     # -- validation / footprint -------------------------------------------
     def counts(self) -> tuple[int, int]:
@@ -202,6 +255,21 @@ class CognoDBAdapter(Neo4jDriverAdapter):
     user_key = "COGNODB_USERNAME"
     password_key = "COGNODB_PASSWORD"
     database_key = "COGNODB_DATABASE"
+
+    def _list_indexes(self) -> set[tuple[str, str]]:
+        # CognoDB's `SHOW INDEXES` uses the older `label`/`properties`
+        # columns (single string, not a list), unlike Neo4j's `labelsOrTypes`.
+        s = self._session()
+        rows = s.run("SHOW INDEXES YIELD label, properties").data()
+        out: set[tuple[str, str]] = set()
+        for r in rows:
+            label = r.get("label") or ""
+            props = r.get("properties") or []
+            if isinstance(props, str):
+                props = [props]
+            for prop in props:
+                out.add((label, prop))
+        return out
 
 
 class Neo4jAuraAdapter(Neo4jDriverAdapter):
@@ -239,3 +307,14 @@ class MemgraphAdapter(Neo4jDriverAdapter):
             "CREATE INDEX ON :User(age)",
             "CREATE INDEX ON :User(gender)",
         ]
+
+    def _list_indexes(self) -> set[tuple[str, str]]:
+        s = self._session()
+        rows = s.run("SHOW INDEX INFO").data()
+        out: set[tuple[str, str]] = set()
+        for r in rows:
+            label = r.get("label") or ""
+            props = r.get("property") or []
+            for prop in props:
+                out.add((label, prop))
+        return out

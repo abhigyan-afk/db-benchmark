@@ -130,8 +130,12 @@ class ArangoDBAdapter(DatabaseAdapter):
         ))
 
     def q_traversal(self, depth: int, node_id: int) -> object:
+        # `WITH users` is required when the start vertex is a bind variable.
+        # Double COLLECT yields a server-side count of distinct vertices at
+        # exactly `depth` hops (semantic equivalent of Cypher count(DISTINCT b)).
         return list(self._db().aql.execute(
-            f"FOR v IN {depth}..{depth} OUTBOUND @start {EDGES_COL} RETURN COUNT(DISTINCT v._key)",
+            f"WITH {NODES_COL} FOR v IN {depth}..{depth} OUTBOUND @start {EDGES_COL} "
+            "COLLECT k = v._key COLLECT WITH COUNT INTO c RETURN c",
             bind_vars={"start": f"{NODES_COL}/{node_id}"},
         ))
 

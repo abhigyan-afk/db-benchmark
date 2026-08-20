@@ -46,7 +46,9 @@ class FalkorDBAdapter(DatabaseAdapter):
                 port=int(c["FALKORDB_PORT"]),
                 username=c["FALKORDB_USERNAME"],
                 password=c["FALKORDB_PASSWORD"],
-                ssl=(c.get("FALKORDB_TLS", "true").lower() == "true"),
+                ssl=(c.get("FALKORDB_TLS", "false").lower() == "true"),
+                socket_connect_timeout=15,
+                socket_timeout=30,
             )
             self._local.client = client
             g = client.select_graph(c["FALKORDB_GRAPH"])
@@ -54,8 +56,9 @@ class FalkorDBAdapter(DatabaseAdapter):
         return g
 
     def connect(self) -> None:
-        # forces connection + graph selection eagerly
-        self._graph().ro_query("RETURN 1")
+        # FalkorDB(...) performs an INFO round-trip on construction, which
+        # verifies connectivity and authentication eagerly.
+        self._graph()
 
     def close(self) -> None:
         client = getattr(self._local, "client", None)

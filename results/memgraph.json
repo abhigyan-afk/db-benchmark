@@ -1,0 +1,115 @@
+{
+  "database": "memgraph",
+  "label": "Memgraph Cloud",
+  "params": {
+    "warmup": 5,
+    "iterations": 100,
+    "mixed_clients": 10,
+    "mixed_duration_s": 30.0,
+    "read_ratio": 0.9,
+    "write_ratio": 0.09999999999999998,
+    "age_threshold": 25,
+    "start_nodes": 20,
+    "seed": 42
+  },
+  "lookups": {
+    "point": {
+      "label": "point_lookup",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 8.321,
+      "p95": 9.544,
+      "mean": 8.432,
+      "std": 0.442,
+      "min": 8.047,
+      "max": 10.487,
+      "notes": ""
+    },
+    "filter": {
+      "label": "filtered_lookup_age",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 10.119,
+      "p95": 12.257,
+      "mean": 10.415,
+      "std": 0.977,
+      "min": 9.515,
+      "max": 15.464,
+      "notes": ""
+    }
+  },
+  "traversals": {
+    "1": {
+      "label": "traversal_1_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 8.434,
+      "p95": 10.236,
+      "mean": 8.693,
+      "std": 0.846,
+      "min": 8.122,
+      "max": 14.26,
+      "notes": ""
+    },
+    "2": {
+      "label": "traversal_2_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 8.425,
+      "p95": 9.066,
+      "mean": 8.51,
+      "std": 0.291,
+      "min": 8.14,
+      "max": 9.601,
+      "notes": ""
+    },
+    "3": {
+      "label": "traversal_3_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 10.383,
+      "p95": 15.104,
+      "mean": 10.742,
+      "std": 2.088,
+      "min": 8.096,
+      "max": 18.147,
+      "notes": ""
+    }
+  },
+  "aggregation": {
+    "label": "aggregation_gender",
+    "unit": "ms",
+    "iterations": 100,
+    "failures": 0,
+    "p50": 23.119,
+    "p95": 27.124,
+    "mean": 23.722,
+    "std": 2.265,
+    "min": 21.808,
+    "max": 40.059,
+    "notes": ""
+  },
+  "mixed": {
+    "label": "mixed",
+    "clients": 10,
+    "read_ratio": 0.9,
+    "write_ratio": 0.1,
+    "duration_seconds": 30.006,
+    "total_ops": 33521,
+    "ops_per_second": 1117.2,
+    "failures": 0
+  },
+  "footprint": {
+    "label": "footprint",
+    "observables": {
+      "nodes": 49683,
+      "relationships": 100000
+    },
+    "notes": "instance specs recorded from the console (see README); storage/memory not observable via driver on this tier"
+  }
+}

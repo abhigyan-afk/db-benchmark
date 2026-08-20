@@ -1,0 +1,9 @@
+{
+  "label": "ingest",
+  "nodes": 49683,
+  "relationships": 100000,
+  "wall_seconds": 29.559,
+  "nodes_per_second": 4682.9,
+  "rels_per_second": 5277.2,
+  "notes": "insert_many batches, batch=1000"
+}

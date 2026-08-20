@@ -12,6 +12,18 @@ LATENCY_COLS = ["platform", "workload", "p50_ms", "p95_ms", "mean_ms", "min_ms",
 INGEST_COLS = ["platform", "nodes", "relationships", "wall_s", "nodes_per_s", "rels_per_s", "notes"]
 MIXED_COLS = ["platform", "clients", "read_ratio", "write_ratio", "duration_s", "ops_per_s", "total_ops", "failures"]
 
+# Preferred display order (matches the README TL;DR table).
+PLATFORM_ORDER = ["cognodb", "neo4j", "memgraph", "falkordb", "arangodb"]
+
+
+def _ordered(results: dict[str, dict]):
+    for name in PLATFORM_ORDER:
+        if name in results:
+            yield name, results[name]
+    for name, r in results.items():
+        if name not in PLATFORM_ORDER:
+            yield name, r
+
 
 def load_results(results_dir: str | Path) -> dict[str, dict]:
     results: dict[str, dict] = {}
@@ -44,7 +56,7 @@ def render_markdown(results: dict[str, dict]) -> str:
     out.append("## Latency (milliseconds)\n")
     out.append("| Platform | Workload | p50 | p95 | mean | min | max | iters | failures |")
     out.append("|---|---|---|---|---|---|---|---|---|")
-    for name, r in results.items():
+    for name, r in _ordered(results):
         for workload, m in _latency_metrics(r):
             out.append(
                 f"| {name} | {workload} | {m['p50']} | {m['p95']} | {m['mean']} | "
@@ -54,7 +66,7 @@ def render_markdown(results: dict[str, dict]) -> str:
     out.append("\n## Data loading\n")
     out.append("| Platform | nodes | relationships | wall (s) | nodes/s | rels/s | notes |")
     out.append("|---|---|---|---|---|---|---|")
-    for name, r in results.items():
+    for name, r in _ordered(results):
         if "ingest" not in r:
             continue
         m = r["ingest"]
@@ -66,7 +78,7 @@ def render_markdown(results: dict[str, dict]) -> str:
     out.append("\n## Mixed workload (concurrent read/write)\n")
     out.append("| Platform | clients | read:write | duration (s) | ops/s | total ops | failures |")
     out.append("|---|---|---|---|---|---|---|")
-    for name, r in results.items():
+    for name, r in _ordered(results):
         if "mixed" not in r:
             continue
         m = r["mixed"]
@@ -78,7 +90,7 @@ def render_markdown(results: dict[str, dict]) -> str:
     out.append("\n## Footprint (where observable)\n")
     out.append("| Platform | observables | notes |")
     out.append("|---|---|---|")
-    for name, r in results.items():
+    for name, r in _ordered(results):
         if "footprint" not in r:
             continue
         f = r["footprint"]
@@ -88,6 +100,16 @@ def render_markdown(results: dict[str, dict]) -> str:
     return "\n".join(out) + "\n"
 
 
+def inject_readme(results: dict[str, dict], readme_path: str | Path = "README.md") -> None:
+    """Replace the README's `## Results` section with freshly rendered tables."""
+    path = Path(readme_path)
+    text = path.read_text()
+    start = text.index("## Results")
+    end = text.index("## Methodology")
+    new_section = "## Results\n\n" + render_markdown(results) + "\n---\n\n"
+    path.write_text(text[:start] + new_section + text[end:])
+
+
 def write_csvs(results: dict[str, dict], out_dir: str | Path) -> None:
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)
@@ -95,14 +117,14 @@ def write_csvs(results: dict[str, dict], out_dir: str | Path) -> None:
     with (d / "matrix.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(LATENCY_COLS)
-        for name, r in results.items():
+        for name, r in _ordered(results):
             for workload, m in _latency_metrics(r):
                 w.writerow([name, workload, m["p50"], m["p95"], m["mean"], m["min"], m["max"], m["iterations"], m["failures"]])
 
     with (d / "ingest.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(INGEST_COLS)
-        for name, r in results.items():
+        for name, r in _ordered(results):
             if "ingest" in r:
                 m = r["ingest"]
                 w.writerow([name, m["nodes"], m["relationships"], m["wall_seconds"], m["nodes_per_second"], m["rels_per_second"], m["notes"]])
@@ -110,7 +132,7 @@ def write_csvs(results: dict[str, dict], out_dir: str | Path) -> None:
     with (d / "mixed.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(MIXED_COLS)
-        for name, r in results.items():
+        for name, r in _ordered(results):
             if "mixed" in r:
                 m = r["mixed"]
                 w.writerow([name, m["clients"], m["read_ratio"], m["write_ratio"], m["duration_seconds"], m["ops_per_second"], m["total_ops"], m["failures"]])

@@ -1,0 +1,115 @@
+{
+  "database": "falkordb",
+  "label": "FalkorDB Cloud",
+  "params": {
+    "warmup": 5,
+    "iterations": 100,
+    "mixed_clients": 10,
+    "mixed_duration_s": 30.0,
+    "read_ratio": 0.9,
+    "write_ratio": 0.09999999999999998,
+    "age_threshold": 25,
+    "start_nodes": 20,
+    "seed": 42
+  },
+  "lookups": {
+    "point": {
+      "label": "point_lookup",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 126.936,
+      "p95": 127.66,
+      "mean": 127.082,
+      "std": 0.524,
+      "min": 126.824,
+      "max": 131.41,
+      "notes": ""
+    },
+    "filter": {
+      "label": "filtered_lookup_age",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 127.171,
+      "p95": 128.145,
+      "mean": 127.313,
+      "std": 0.475,
+      "min": 127.018,
+      "max": 130.308,
+      "notes": ""
+    }
+  },
+  "traversals": {
+    "1": {
+      "label": "traversal_1_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 127.004,
+      "p95": 127.888,
+      "mean": 127.208,
+      "std": 0.963,
+      "min": 126.908,
+      "max": 135.662,
+      "notes": ""
+    },
+    "2": {
+      "label": "traversal_2_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 127.058,
+      "p95": 127.372,
+      "mean": 127.102,
+      "std": 0.212,
+      "min": 126.855,
+      "max": 128.614,
+      "notes": ""
+    },
+    "3": {
+      "label": "traversal_3_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 128.705,
+      "p95": 133.082,
+      "mean": 128.938,
+      "std": 1.6,
+      "min": 126.89,
+      "max": 134.384,
+      "notes": ""
+    }
+  },
+  "aggregation": {
+    "label": "aggregation_gender",
+    "unit": "ms",
+    "iterations": 100,
+    "failures": 0,
+    "p50": 134.724,
+    "p95": 135.583,
+    "mean": 134.843,
+    "std": 0.439,
+    "min": 134.52,
+    "max": 137.913,
+    "notes": ""
+  },
+  "mixed": {
+    "label": "mixed",
+    "clients": 10,
+    "read_ratio": 0.9,
+    "write_ratio": 0.1,
+    "duration_seconds": 30.13,
+    "total_ops": 1986,
+    "ops_per_second": 65.9,
+    "failures": 0
+  },
+  "footprint": {
+    "label": "footprint",
+    "observables": {
+      "nodes": 49683,
+      "relationships": 100000
+    },
+    "notes": "instance specs recorded from the console (see README); storage/memory not observable via driver on this tier"
+  }
+}

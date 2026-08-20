@@ -60,8 +60,13 @@ class Neo4jDriverAdapter(DatabaseAdapter):
         return self.connection.get(self.database_key, "neo4j")
 
     def connect(self) -> None:
-        self._driver = GraphDatabase.driver(self._uri(), auth=(self._user(), self._password()))
+        self._driver = GraphDatabase.driver(
+            self._uri(), auth=(self._user(), self._password()), **self._driver_kwargs()
+        )
         self._driver.verify_connectivity()
+
+    def _driver_kwargs(self) -> dict:
+        return {}
 
     def close(self) -> None:
         if self._driver is not None:
@@ -214,7 +219,8 @@ class MemgraphAdapter(Neo4jDriverAdapter):
 
     def _uri(self) -> str:
         tls = self.connection.get("MEMGRAPH_TLS", "true").lower() == "true"
-        scheme = "bolt+s" if tls else "bolt"
+        # bolt+ssc = TLS with a self-signed certificate (Memgraph Cloud).
+        scheme = "bolt+ssc" if tls else "bolt"
         return f"{scheme}://{self.connection['MEMGRAPH_HOST']}:{self.connection['MEMGRAPH_PORT']}"
 
     def _user(self) -> str:

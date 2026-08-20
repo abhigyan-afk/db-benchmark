@@ -10,7 +10,7 @@ from pathlib import Path
 from .adapters import build_adapter
 from .adapters.base import iter_edges, iter_nodes
 from .config import connection
-from .report import load_results, render_markdown, write_csvs
+from .report import inject_readme, load_results, render_markdown, write_csvs
 from .runner import benchmark
 
 REAL_DBS = ["cognodb", "neo4j", "memgraph", "falkordb", "arangodb"]
@@ -110,6 +110,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     md = render_markdown(results)
     write_csvs(results, RESULTS_DIR)
     (RESULTS_DIR / "matrix.md").write_text(md)
+    inject_readme(results, "README.md")
     print(md)
     return 0
 

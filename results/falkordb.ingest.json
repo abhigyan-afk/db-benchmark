@@ -1,0 +1,9 @@
+{
+  "label": "ingest",
+  "nodes": 49683,
+  "relationships": 100000,
+  "wall_seconds": 26.381,
+  "nodes_per_second": 6730.3,
+  "rels_per_second": 5263.3,
+  "notes": "batched UNWIND, batch=1000"
+}

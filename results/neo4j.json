@@ -1,0 +1,115 @@
+{
+  "database": "neo4j",
+  "label": "Neo4j AuraDB",
+  "params": {
+    "warmup": 5,
+    "iterations": 100,
+    "mixed_clients": 10,
+    "mixed_duration_s": 30.0,
+    "read_ratio": 0.9,
+    "write_ratio": 0.09999999999999998,
+    "age_threshold": 25,
+    "start_nodes": 20,
+    "seed": 42
+  },
+  "lookups": {
+    "point": {
+      "label": "point_lookup",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 189.958,
+      "p95": 192.565,
+      "mean": 201.665,
+      "std": 96.377,
+      "min": 188.999,
+      "max": 1135.001,
+      "notes": ""
+    },
+    "filter": {
+      "label": "filtered_lookup_age",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 191.763,
+      "p95": 196.276,
+      "mean": 195.879,
+      "std": 27.562,
+      "min": 190.627,
+      "max": 392.594,
+      "notes": ""
+    }
+  },
+  "traversals": {
+    "1": {
+      "label": "traversal_1_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 189.6,
+      "p95": 192.217,
+      "mean": 193.6,
+      "std": 27.045,
+      "min": 188.635,
+      "max": 383.191,
+      "notes": ""
+    },
+    "2": {
+      "label": "traversal_2_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 189.572,
+      "p95": 192.304,
+      "mean": 193.859,
+      "std": 28.706,
+      "min": 188.87,
+      "max": 395.504,
+      "notes": ""
+    },
+    "3": {
+      "label": "traversal_3_hop",
+      "unit": "ms",
+      "iterations": 100,
+      "failures": 0,
+      "p50": 191.171,
+      "p95": 195.169,
+      "mean": 195.19,
+      "std": 26.911,
+      "min": 189.108,
+      "max": 382.377,
+      "notes": ""
+    }
+  },
+  "aggregation": {
+    "label": "aggregation_gender",
+    "unit": "ms",
+    "iterations": 100,
+    "failures": 0,
+    "p50": 200.038,
+    "p95": 205.534,
+    "mean": 204.786,
+    "std": 27.718,
+    "min": 198.971,
+    "max": 399.992,
+    "notes": ""
+  },
+  "mixed": {
+    "label": "mixed",
+    "clients": 10,
+    "read_ratio": 0.9,
+    "write_ratio": 0.1,
+    "duration_seconds": 30.187,
+    "total_ops": 1512,
+    "ops_per_second": 50.1,
+    "failures": 0
+  },
+  "footprint": {
+    "label": "footprint",
+    "observables": {
+      "nodes": 49683,
+      "relationships": 100000
+    },
+    "notes": "instance specs recorded from the console (see README); storage/memory not observable via driver on this tier"
+  }
+}
